@@ -39,13 +39,39 @@ namespace WattleScript.Interpreter.Interop
 			FillMemberList();
 		}
 
+		private bool ShouldIncludeMember(string memberName, MemberInfo member, HashSet<string> membersToIgnore)
+		{
+			if (AccessMode == InteropAccessMode.HideMembers)
+				return false;
+
+			// First check the HideMember HashSet
+			if (membersToIgnore.Contains(memberName))
+				return false;
+
+			// Get default visibility setting from the type
+			var defaultVisibilityAttr = Type.GetCustomAttributes(typeof(WattleScriptDefaultVisibilityAttribute), true)
+				.OfType<WattleScriptDefaultVisibilityAttribute>()
+				.FirstOrDefault();
+
+			// If no default visibility attribute is present, maintain original behavior (visible by default)
+			if (defaultVisibilityAttr == null)
+				return true;
+
+			// If default is visible, include unless hidden (which we checked above)
+			if (defaultVisibilityAttr.IsVisibleByDefault)
+				return true;
+
+			// If default is hidden, only include if explicitly marked visible
+			return member.GetVisibilityFromAttributes() == true;
+		}
+
 		/// <summary>
 		/// Fills the member list.
 		/// </summary>
 		private void FillMemberList()
 		{
 			HashSet<string> membersToIgnore = new HashSet<string>(
-				this.Type.GetCustomAttributes( typeof(WattleScriptHideMemberAttribute), true)
+				this.Type.GetCustomAttributes(typeof(WattleScriptHideMemberAttribute), true)
 					.OfType<WattleScriptHideMemberAttribute>()
 					.Select(a => a.MemberName)
 				);
@@ -60,10 +86,10 @@ namespace WattleScript.Interpreter.Interop
 				// add declared constructors
 				foreach (ConstructorInfo ci in type.GetAllConstructors())
 				{
-					if (membersToIgnore.Contains("__new"))
-						continue;
-
-					AddMember("__new", MethodMemberDescriptor.TryCreateIfVisible(ci, this.AccessMode));
+					if (ShouldIncludeMember("__new", ci, membersToIgnore))
+					{
+						AddMember("__new", MethodMemberDescriptor.TryCreateIfVisible(ci, this.AccessMode));
+					}
 				}
 
 				// valuetypes don't reflect their empty ctor.. actually empty ctors are a perversion, we don't care and implement ours
@@ -75,7 +101,8 @@ namespace WattleScript.Interpreter.Interop
 			// add methods to method list and metamethods
 			foreach (MethodInfo mi in type.GetAllMethods())
 			{
-				if (membersToIgnore.Contains(mi.Name)) continue;
+				if (!ShouldIncludeMember(mi.Name, mi, membersToIgnore))
+					continue;
 
 				MethodMemberDescriptor md = MethodMemberDescriptor.TryCreateIfVisible(mi, this.AccessMode);
 
@@ -103,7 +130,7 @@ namespace WattleScript.Interpreter.Interop
 			// get properties
 			foreach (PropertyInfo pi in type.GetAllProperties())
 			{
-				if (pi.IsSpecialName || pi.GetIndexParameters().Any() || membersToIgnore.Contains(pi.Name))
+				if (pi.IsSpecialName || pi.GetIndexParameters().Any() || !ShouldIncludeMember(pi.Name, pi, membersToIgnore))
 					continue;
 
 				AddMember(pi.Name, PropertyMemberDescriptor.TryCreateIfVisible(pi, this.AccessMode));
@@ -112,7 +139,7 @@ namespace WattleScript.Interpreter.Interop
 			// get fields
 			foreach (FieldInfo fi in type.GetAllFields())
 			{
-				if (fi.IsSpecialName || membersToIgnore.Contains(fi.Name))
+				if (fi.IsSpecialName || !ShouldIncludeMember(fi.Name, fi, membersToIgnore))
 					continue;
 
 				AddMember(fi.Name, FieldMemberDescriptor.TryCreateIfVisible(fi, this.AccessMode));
@@ -121,7 +148,7 @@ namespace WattleScript.Interpreter.Interop
 			// get events
 			foreach (EventInfo ei in type.GetAllEvents())
 			{
-				if (ei.IsSpecialName || membersToIgnore.Contains(ei.Name))
+				if (ei.IsSpecialName || !ShouldIncludeMember(ei.Name, ei, membersToIgnore))
 					continue;
 
 				AddMember(ei.Name, EventMemberDescriptor.TryCreateIfVisible(ei, this.AccessMode));
@@ -130,7 +157,7 @@ namespace WattleScript.Interpreter.Interop
 			// get nested types and create statics
 			foreach (Type nestedType in type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
 			{
-				if (membersToIgnore.Contains(nestedType.Name))
+				if (!ShouldIncludeMember(nestedType.Name, nestedType, membersToIgnore))
 					continue;
 
 				if (!nestedType.IsGenericTypeDefinition)
