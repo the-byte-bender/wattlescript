@@ -22,5 +22,10 @@ namespace WattleScript.Interpreter.Interop
 		{
 			Visible = visible;
 		}
+
+		public WattleScriptVisibleAttribute()
+		{
+			Visible = true;
+		}
 	}
 }
